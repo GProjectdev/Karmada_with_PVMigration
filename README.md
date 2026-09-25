@@ -17,10 +17,12 @@ flowchart LR
   CLEAN --> PV[Work removed / PV retained]
 ```
 
-이 저장소의 루트에는 PV-Migration-System만 있습니다. Karmada 자체 소스와 vendor 트리는 포함하지 않습니다. Karmada는 별도로 설치한 환경을 사용합니다.
+`main` 브랜치의 루트에는 PV-Migration-System만 있습니다. Karmada 자체 소스와 vendor 트리는 포함하지 않습니다. Karmada는 별도로 설치한 환경을 사용합니다.
+
+기존 Karmada 코드는 `Old_and_have_karmada` 브랜치에 보존됩니다. 일반 clone은 다른 브랜치의 이력도 내려받으므로, 용량을 줄이려면 아래처럼 `main`만 clone하세요.
 
 ```bash
-git clone https://github.com/GProjectdev/Karmada_with_PVMigration.git PV-Migration-System
+git clone --single-branch --branch main https://github.com/GProjectdev/Karmada_with_PVMigration.git PV-Migration-System
 cd PV-Migration-System
 ```
 
