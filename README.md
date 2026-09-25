@@ -270,10 +270,21 @@ kubectl --context karmada -n default patch propagationpolicy web-pp \
 
 kubectl --context karmada -n default patch resourcebinding "$RB_NAME" \
   --type=merge \
-  -p='{"spec":{"suspension":{"dispatching":false}}}'
+  -p='{"spec":{"suspension":{"dispatching":null}}}'
 ```
 
 ## 기존 타깃 사전 스테이징 제한
+
+Stateful-Migration-System과 함께 사용할 때는 위 수동 재개 대신
+[Suspension 게이트](https://github.com/GProjectdev/Stateful-Migration-Operator-with-PV/blob/main/docs/suspension.md)와
+[StatefulSet 2 Pod 통합 가이드](https://github.com/GProjectdev/Stateful-Migration-Operator-with-PV/blob/main/docs/two-replica-migration-guide.md)를 따르세요.
+Karmada의 dispatching은 true만 허용하므로 수동 해제 예제도 false가 아닌 필드 제거(null)를 사용합니다.
+
+새 게이트는 현재 PVMigration UID, observedGeneration, Completed, 비어 있지 않은 planHash,
+전체 volumes에 대응하는 applied/detached Work 기록 및 source/target/RB/workload UID/PVC 매핑을 확인합니다.
+이 PV 컨트롤러 자체는 ResourceBinding을 재개하지 않습니다.
+Completed는 과거에 확정된 준비 기록이며 현재 NFS 상태나 애플리케이션 복구를 증명하지 않습니다.
+기존 annotation만 검사하는 suspension 컨트롤러는 중지하고, 새 게이트와 수동 해제를 동시에 사용하지 마세요.
 
 stock Karmada 환경에서 타깃 cluster가 이미 ResourceBinding placement에 있으면 Karmada가 workload resource를 먼저 dispatch할 수 있습니다. 그러면 이 컨트롤러가 만드는 retained PV Work와 StatefulSet/PVC 생성 순서가 경쟁합니다.
 
