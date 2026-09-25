@@ -1,0 +1,9 @@
+apiVersion: migration.dcnlab.com/v1alpha1
+kind: PVMetadata
+metadata:
+  name: web-member1
+  namespace: default
+spec:
+  workloadRef:
+    name: web
+  sourceCluster: member1

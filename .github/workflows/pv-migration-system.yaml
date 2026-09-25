@@ -1,0 +1,32 @@
+name: PV Migration System
+
+permissions:
+  contents: read
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test-vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: go.sum
+      - name: Go module hygiene
+        run: go mod tidy && git diff --exit-code -- go.mod go.sum
+      - name: Format check
+        run: |
+          gofmt -w $(find api cmd internal -name '*.go')
+          git diff --exit-code
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Race test
+        run: go test -race ./...
+      - name: Build
+        run: go build ./cmd/manager

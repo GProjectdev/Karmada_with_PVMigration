@@ -1,0 +1,135 @@
+apiVersion: config.karmada.io/v1alpha1
+kind: ResourceInterpreterCustomization
+metadata:
+  name: pvmetadata.migration.dcnlab.com
+spec:
+  target:
+    apiVersion: migration.dcnlab.com/v1alpha1
+    kind: PVMetadata
+  customizations:
+    healthInterpretation:
+      luaScript: |
+        function InterpretHealth(observedObj)
+          if observedObj.status == nil then
+            return false
+          end
+          if observedObj.metadata == nil or observedObj.metadata.generation == nil then
+            return observedObj.status.ready == true
+          end
+          return observedObj.status.ready == true and observedObj.status.observedGeneration == observedObj.metadata.generation
+        end
+    statusReflection:
+      luaScript: |
+        function ReflectStatus(observedObj)
+          if observedObj.status == nil then
+            return {}
+          end
+          return {
+            observedGeneration = observedObj.status.observedGeneration,
+            ready = observedObj.status.ready,
+            message = observedObj.status.message,
+            collectedAt = observedObj.status.collectedAt,
+            workloadUID = observedObj.status.workloadUID,
+            volumes = observedObj.status.volumes
+          }
+        end
+    statusAggregation:
+      luaScript: |
+        local function copyVolumes(volumes)
+          local out = {}
+          if volumes == nil then
+            return out
+          end
+          for _, v in ipairs(volumes) do
+            table.insert(out, v)
+          end
+          table.sort(out, function(a, b)
+            local ao = a.ordinal or -1
+            local bo = b.ordinal or -1
+            if ao ~= bo then
+              return ao < bo
+            end
+            return (a.pvcName or "") < (b.pvcName or "")
+          end)
+          return out
+        end
+
+        local function clusterNameOf(item)
+          return item.clusterName or item.cluster or item.name or ""
+        end
+
+        function AggregateStatus(desiredObj, statusItems)
+          if desiredObj.status == nil then
+            desiredObj.status = {}
+          end
+
+          local sourceCluster = ""
+          if desiredObj.spec ~= nil and desiredObj.spec.sourceCluster ~= nil then
+            sourceCluster = desiredObj.spec.sourceCluster
+          end
+
+          local previous = {}
+          if desiredObj.status ~= nil and desiredObj.status.clusters ~= nil then
+            for _, cluster in ipairs(desiredObj.status.clusters) do
+              if sourceCluster == "" or cluster.clusterName == sourceCluster then
+                previous[cluster.clusterName] = cluster
+              end
+            end
+          end
+
+          local nextByCluster = {}
+          for _, item in ipairs(statusItems or {}) do
+            local name = clusterNameOf(item)
+            if sourceCluster == "" or name == sourceCluster then
+            local status = item.status or {}
+            local current = desiredObj.metadata ~= nil and desiredObj.metadata.generation ~= nil and status.observedGeneration == desiredObj.metadata.generation
+            local ready = status.ready == true and current
+            local volumes = copyVolumes(status.volumes)
+            local old = previous[name]
+            if not ready and old ~= nil and old.volumes ~= nil then
+              volumes = copyVolumes(old.volumes)
+              status.observedGeneration = old.observedGeneration
+              status.workloadUID = old.workloadUID
+              status.collectedAt = old.collectedAt
+              status.message = old.message
+            end
+            nextByCluster[name] = {
+              clusterName = name,
+              observedGeneration = status.observedGeneration,
+              ready = ready,
+              message = status.message,
+              collectedAt = status.collectedAt,
+              workloadUID = status.workloadUID,
+              volumes = volumes
+            }
+            end
+          end
+
+          for name, old in pairs(previous) do
+            if nextByCluster[name] == nil then
+              nextByCluster[name] = {
+                clusterName = name,
+                observedGeneration = old.observedGeneration,
+                ready = false,
+                message = old.message,
+                collectedAt = old.collectedAt,
+                workloadUID = old.workloadUID,
+                volumes = copyVolumes(old.volumes)
+              }
+            end
+          end
+
+          local names = {}
+          for name, _ in pairs(nextByCluster) do
+            table.insert(names, name)
+          end
+          table.sort(names)
+
+          local clusters = {}
+          for _, name in ipairs(names) do
+            table.insert(clusters, nextByCluster[name])
+          end
+
+          desiredObj.status.clusters = clusters
+          return desiredObj
+        end

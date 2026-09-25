@@ -1,0 +1,14 @@
+apiVersion: migration.dcnlab.com/v1alpha1
+kind: PVMigration
+metadata:
+  name: web-member1-to-aws
+  namespace: default
+spec:
+  metadataRef: pvm-replace-me
+  sourceCluster: member1
+  targetCluster: aws
+  resourceBinding: web-statefulset
+  sourceFenced: false
+  volumes:
+    - sourcePVC: data-web-0
+      targetPVC: data-web-0
