@@ -14,6 +14,12 @@ Validated on 2026-09-25 with Go 1.27.1 on Windows; the module minimum and CI too
 
 Controller tests cover bound PV/PVC identity, nonzero StatefulSet ordinals, all claim templates, last-good snapshot preservation, unsupported storage rejection, source fencing and dispatch suspension gates, source-fixed metadata propagation, immutable plan hashes, duplicate target requests, stale or foreign Work evidence, and restart-safe Work detachment.
 
+`TestTwoVolumeCleanupNeverResumesResourceBinding` covers the HybridSpotVM handoff
+boundary for multi-volume migrations: PV completion requires all recorded Works to be
+applied and detached, and it must not resume ResourceBinding dispatch or alter placement.
+Source metadata and plan identity are covered by immutable plan-hash tests; a
+higher-level restore operation UID remains external policy evidence.
+
 ## Not executed locally
 
 No live Karmada/member API connection, Docker daemon, NFS mount, CRIU restoration, or cloud storage operation was used. Cross-compiling a binary and testing fake clients do not prove deployment or data integrity on a real cluster. The Linux CI workflow additionally runs the Go race detector; its result is separate from local verification.
@@ -27,5 +33,9 @@ No live Karmada/member API connection, Docker daemon, NFS mount, CRIU restoratio
 5. Wait for `status.phase=Completed`. Confirm each recorded Work is gone from Karmada and its PV still exists on the target with `Retain` and the expected namespace/PVC claimRef. The completed CR remains as the reservation/history record.
 6. Prepare checkpoint restoration separately, update the workload's actual PropagationPolicy, and release dispatch only after all required gates pass. Verify target PVCs bind to the retained PVs and the payload checksum matches.
 7. Reconcile or restart controllers again. Confirm deleted PV Works are not recreated. Submit an overlapping request and confirm it is blocked without an additional PV.
+8. For HybridSpotVM integration, verify Policy Manager keeps the old `NodeProvision`
+   until restore evidence matches the current `PVMigration` UID, observed generation,
+   plan hash, source metadata, target PVC mappings, and restore operation UID. Confirm PV
+   completion alone does not delete any NodeProvision.
 
 Also exercise source unavailability after a successful snapshot, a missing PVC, a changed NFS path after planning, a CSI/EBS source, and a target already in ResourceBinding placement. These cases must retain the old snapshot or block migration without deleting storage.

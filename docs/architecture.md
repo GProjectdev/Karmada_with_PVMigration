@@ -65,8 +65,16 @@ Migration is intentionally narrow:
 - No data-byte copying.
 - No automatic source deletion.
 - No automatic ResourceBinding resume.
+- No workload PropagationPolicy placement changes.
+- No Node or NodeProvision deletion.
 - Existing target pre-staging is unsupported when the target is already present in the ResourceBinding cluster list.
 
 Before a migration starts, operators must suspend StatefulSet dispatching in the ResourceBinding and attest that the source workload is fenced or stopped externally. A safe manual fence can be scaling the source workload to zero while preserving the last PVMetadata snapshot. Operators must also record the source claim Retain state before migration; this is an external operational requirement, not something the migration controller can infer after the fact.
 
 Completed `PVMigration` objects are migration history and duplicate target PVC reservation records. Controllers should not automatically prune them; deleting history is an operator decision.
+
+When integrated with HybridSpotVM_ManagementSystem, `Completed` remains historical PV
+evidence rather than live readiness. Policy Manager must wait for explicit restore
+evidence that matches the current migration UID, observed generation, plan hash, source
+metadata, target PVC mappings, and higher-level restore operation UID before deleting an
+old `NodeProvision`. See [HybridSpotVM integration](hybridspotvm-integration.md).

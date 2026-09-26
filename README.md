@@ -295,3 +295,13 @@ stock Karmada 환경에서 타깃 cluster가 이미 ResourceBinding placement에
 `go test ./...`, `go vet ./...`, `make build`, `make manifests`로 로컬 검증을 재현합니다. 검증 범위와 실제 클러스터 확인 항목은 [docs/validation.md](docs/validation.md)에 있습니다.
 
 진행 중인 `PVMigration` 삭제는 취소 API가 아닙니다. `Completed` 이전에 삭제하면 소유자 참조가 없는 PV Work가 남을 수 있습니다. 요청과 Work의 상태를 확인한 뒤 복구해야 하며, Work 정리 시 `preserveResourcesOnDeletion=true`를 유지해야 합니다. 이 컨트롤러는 PV/PVC 삭제나 원본 데이터를 정리하지 않습니다.
+
+## HybridSpotVM integration
+
+See [docs/hybridspotvm-integration.md](docs/hybridspotvm-integration.md) for the
+handoff contract with `HybridSpotVM_ManagementSystem`. In short, `PVMigration`
+`Completed` is historical PV evidence, not live readiness. HybridSpotVM Policy Manager
+must delete an old `NodeProvision` only after verified restore evidence matches the
+current migration UID/generation, plan hash, source metadata, target PVC mappings, and
+restore operation UID. This controller does not resume ResourceBindings, change workload
+placement, delete Nodes, or delete NodeProvisions.

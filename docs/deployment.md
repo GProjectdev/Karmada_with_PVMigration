@@ -37,3 +37,10 @@ A completed migration means the retained PV Work was applied to the target and t
 The `PVMigration` CR should remain after completion. It preserves target PVC reservations and plan history so a later request cannot accidentally reuse the same target PVC without an explicit operator decision.
 
 Resume the workload only after an external checkpoint or restore gate says it is safe.
+
+When a higher-level HybridSpotVM policy flow consumes this status, `Completed` is still
+only historical PV evidence. Policy Manager must not delete the old `NodeProvision`
+until restore evidence is verified against the current `PVMigration` UID, observed
+generation, plan hash, source metadata, target PVC mappings, and restore operation UID.
+PV-Migration-System never resumes ResourceBinding dispatch, changes workload placement,
+or deletes Nodes/NodeProvisions. See [HybridSpotVM integration](hybridspotvm-integration.md).
