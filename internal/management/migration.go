@@ -98,6 +98,9 @@ func (r *PVMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		actual := object(WorkGVK, ref.Namespace, ref.Name)
 		err := r.Get(ctx, client.ObjectKeyFromObject(actual), actual)
 		if apierrors.IsNotFound(err) {
+			if ref.RoutingWorkUID != "" {
+				return result, fmt.Errorf("routing repair Work disappeared; refusing recreation")
+			}
 			if ref.Applied {
 				return result, fmt.Errorf("applied Work %s disappeared before cleanup; inspect retained PV before recovery", ref.Name)
 			}
@@ -109,6 +112,13 @@ func (r *PVMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		if err != nil {
 			return result, err
+		}
+		changed, err := r.ensureWorkRouting(ctx, m, i, actual, expected)
+		if err != nil {
+			return result, err
+		}
+		if changed {
+			return result, nil
 		}
 		if err := validateWork(actual, expected, m); err != nil {
 			return result, err
@@ -372,6 +382,7 @@ func BuildWorks(m *api.PVMigration, md *api.PVMetadata) ([]*unstructured.Unstruc
 		w.SetLabels(map[string]string{ManagedLabel: ManagerName, OwnerLabel: string(m.UID)})
 		// No cross-namespace ownerReference: cleanup is explicit and deletion always preserves PVs.
 		w.Object["spec"] = map[string]interface{}{"preserveResourcesOnDeletion": true, "workload": map[string]interface{}{"manifests": []interface{}{manifest}}}
+		setWorkRouting(w)
 		works = append(works, w)
 	}
 	return works, nil
@@ -381,7 +392,7 @@ func validateWork(actual, expected *unstructured.Unstructured, m *api.PVMigratio
 	if actual.GetLabels()[OwnerLabel] != string(m.UID) || actual.GetLabels()[ManagedLabel] != ManagerName || !reflect.DeepEqual(comparableWorkSpec(actual), comparableWorkSpec(expected)) {
 		return fmt.Errorf("Work %s ownership or immutable spec conflict", actual.GetName())
 	}
-	if actual.GetGeneration() > 1 {
+	if !workGenerationAllowed(actual, m) {
 		return fmt.Errorf("Work %s was modified; refuse stale application evidence", actual.GetName())
 	}
 	return nil

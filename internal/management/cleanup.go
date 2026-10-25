@@ -52,7 +52,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return result, err
 		}
 		preserve, _, _ := unstructured.NestedBool(w.Object, "spec", "preserveResourcesOnDeletion")
-		if w.GetLabels()[OwnerLabel] != string(m.UID) || w.GetLabels()[ManagedLabel] != ManagerName || !preserve || w.GetGeneration() > 1 {
+		if w.GetLabels()[OwnerLabel] != string(m.UID) || w.GetLabels()[ManagedLabel] != ManagerName || !preserve || !workGenerationAllowed(w, m) {
 			return result, fmt.Errorf("refuse deletion: Work %s ownership/preservation changed", ref.Name)
 		}
 		all = false
@@ -61,6 +61,32 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		if !workApplied(w) {
 			return result, fmt.Errorf("Work %s no longer has valid PV application evidence", ref.Name)
+		}
+		if ref.RoutingWorkUID != "" {
+			md := &api.PVMetadata{}
+			if err := r.Get(ctx, client.ObjectKey{Namespace: m.Namespace, Name: m.Spec.MetadataRef}, md); err != nil {
+				return result, err
+			}
+			works, err := BuildWorks(m, md)
+			if err != nil {
+				return result, err
+			}
+			hash, err := planHash(m, md, works)
+			if err != nil || hash != m.Status.PlanHash {
+				return result, fmt.Errorf("repair cleanup plan changed")
+			}
+			matched := false
+			for _, expected := range works {
+				if expected.GetName() == w.GetName() && expected.GetNamespace() == w.GetNamespace() {
+					if err := validateWork(w, expected, m); err != nil {
+						return result, err
+					}
+					matched = true
+				}
+			}
+			if !matched {
+				return result, fmt.Errorf("repair cleanup Work absent from plan")
+			}
 		}
 		// UID/RV preconditions prevent deleting a replacement or concurrently modified Work.
 		uid, rv := w.GetUID(), w.GetResourceVersion()

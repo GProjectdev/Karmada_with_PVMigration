@@ -11,7 +11,7 @@ rules:
     verbs: ["get", "list", "watch", "create", "patch", "update"]
   - apiGroups: ["work.karmada.io"]
     resources: ["works"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
   - apiGroups: ["policy.karmada.io"]
     resources: ["propagationpolicies"]
     verbs: ["get", "list", "watch", "create", "patch", "update"]

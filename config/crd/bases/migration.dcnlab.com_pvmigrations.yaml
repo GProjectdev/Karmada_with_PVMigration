@@ -121,6 +121,11 @@ spec:
                         type: boolean
                       detached:
                         type: boolean
+                      routingWorkUID:
+                        type: string
+                      routingGeneration:
+                        type: integer
+                        format: int64
       additionalPrinterColumns:
         - name: Phase
           type: string

@@ -21,6 +21,8 @@ func TestWorkAdmissionMetadataComparison(t *testing.T) {
 	delete(metadata, "creationTimestamp")
 	metadata["labels"].(map[string]interface{})["work.karmada.io/permanent-id"] = "tracking-id"
 	metadata["annotations"] = map[string]interface{}{
+		workNameAnnotation:                                expected.GetName(),
+		workNamespaceAnnotation:                           expected.GetNamespace(),
 		"resourcetemplate.karmada.io/managed-labels":      "migration.dcnlab.com/managed-by,migration.dcnlab.com/migration-uid,work.karmada.io/permanent-id",
 		"resourcetemplate.karmada.io/managed-annotations": "resourcetemplate.karmada.io/managed-labels,resourcetemplate.karmada.io/managed-annotations",
 	}

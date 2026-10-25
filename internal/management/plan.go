@@ -26,7 +26,11 @@ func planHash(m *api.PVMigration, md *api.PVMetadata, works []*unstructured.Unst
 		}
 	}
 	for _, w := range works {
-		parts = append(parts, w.Object["spec"])
+		// Routing is derived from Work identity, not part of the storage plan.
+		// Preserve hashes already persisted by versions without routing metadata.
+		legacy := w.DeepCopy()
+		removeWorkRouting(legacy)
+		parts = append(parts, legacy.Object["spec"])
 	}
 	data, err := json.Marshal(parts)
 	if err != nil {

@@ -8,10 +8,12 @@ type VolumeMapping struct {
 }
 
 type WorkReference struct {
-	Name      string `json:"name,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
-	Applied   bool   `json:"applied,omitempty"`
-	Detached  bool   `json:"detached,omitempty"`
+	RoutingWorkUID    string `json:"routingWorkUID,omitempty"`
+	RoutingGeneration int64  `json:"routingGeneration,omitempty"`
+	Name              string `json:"name,omitempty"`
+	Namespace         string `json:"namespace,omitempty"`
+	Applied           bool   `json:"applied,omitempty"`
+	Detached          bool   `json:"detached,omitempty"`
 }
 
 type PVMigrationSpec struct {
