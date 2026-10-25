@@ -372,7 +372,7 @@ func BuildWorks(m *api.PVMigration, md *api.PVMetadata) ([]*unstructured.Unstruc
 		spec.PersistentVolumeReclaimPolicy = corev1.PersistentVolumeReclaimRetain
 		spec.ClaimRef = &corev1.ObjectReference{APIVersion: "v1", Kind: "PersistentVolumeClaim", Namespace: m.Namespace, Name: mapping.TargetPVC}
 		pvName := stableName("pvm", md.Spec.WorkloadRef.UID, m.Spec.TargetCluster, m.Namespace, mapping.TargetPVC)
-		pv := &corev1.PersistentVolume{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PersistentVolume"}, ObjectMeta: metav1.ObjectMeta{Name: pvName, Labels: map[string]string{ManagedLabel: ManagerName, OwnerLabel: string(m.UID)}}, Spec: *spec}
+		pv := &corev1.PersistentVolume{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PersistentVolume"}, ObjectMeta: metav1.ObjectMeta{Name: pvName, Labels: map[string]string{ManagedLabel: ManagerName, OwnerLabel: string(m.UID), "karmada.io/managed": "true"}}, Spec: *spec}
 		manifest, err := runtime.DefaultUnstructuredConverter.ToUnstructured(pv)
 		if err != nil {
 			return nil, err
