@@ -378,13 +378,50 @@ func BuildWorks(m *api.PVMigration, md *api.PVMetadata) ([]*unstructured.Unstruc
 }
 
 func validateWork(actual, expected *unstructured.Unstructured, m *api.PVMigration) error {
-	if actual.GetLabels()[OwnerLabel] != string(m.UID) || actual.GetLabels()[ManagedLabel] != ManagerName || !reflect.DeepEqual(actual.Object["spec"], expected.Object["spec"]) {
+	if actual.GetLabels()[OwnerLabel] != string(m.UID) || actual.GetLabels()[ManagedLabel] != ManagerName || !reflect.DeepEqual(comparableWorkSpec(actual), comparableWorkSpec(expected)) {
 		return fmt.Errorf("Work %s ownership or immutable spec conflict", actual.GetName())
 	}
 	if actual.GetGeneration() > 1 {
 		return fmt.Errorf("Work %s was modified; refuse stale application evidence", actual.GetName())
 	}
 	return nil
+}
+
+// Admission adds tracking metadata to embedded manifests. Keep all PV fields
+// and migration ownership labels in the comparison.
+func comparableWorkSpec(w *unstructured.Unstructured) interface{} {
+	copy := w.DeepCopy()
+	manifests, _, _ := unstructured.NestedSlice(copy.Object, "spec", "workload", "manifests")
+	for _, manifest := range manifests {
+		obj, ok := manifest.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		metadata, ok := obj["metadata"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for field, keys := range map[string][]string{
+			"labels":      {"work.karmada.io/permanent-id"},
+			"annotations": {"resourcetemplate.karmada.io/managed-annotations", "resourcetemplate.karmada.io/managed-labels"},
+		} {
+			if values, ok := metadata[field].(map[string]interface{}); ok {
+				for _, key := range keys {
+					delete(values, key)
+				}
+				if len(values) == 0 {
+					delete(metadata, field)
+				}
+			}
+		}
+		if metadata["creationTimestamp"] == nil {
+			delete(metadata, "creationTimestamp")
+		}
+	}
+	if manifests != nil {
+		_ = unstructured.SetNestedSlice(copy.Object, manifests, "spec", "workload", "manifests")
+	}
+	return copy.Object["spec"]
 }
 
 func workApplied(w *unstructured.Unstructured) bool {
