@@ -4,6 +4,9 @@ metadata:
   name: pv-migration-management
 rules:
   - apiGroups: ["migration.dcnlab.com"]
+    resources: ["restorerequests"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["migration.dcnlab.com"]
     resources: ["pvmetadata", "pvmetadata/status", "pvmigrations", "pvmigrations/status"]
     verbs: ["get", "list", "watch", "create", "patch", "update"]
   - apiGroups: ["work.karmada.io"]

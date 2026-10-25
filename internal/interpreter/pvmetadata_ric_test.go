@@ -208,7 +208,12 @@ func TestPVMigrationCRDUsesSimpleSpecImmutabilityRule(t *testing.T) {
 
 func loadRICFunction(t *testing.T, customizationName, functionName string) *lua.LState {
 	t.Helper()
-	ric := loadYAML(t, filepath.Join("..", "..", "config", "karmada", "ric", "pvmetadata_resource_interpreter.yaml"))
+	return loadNamedRICFunction(t, "pvmetadata_resource_interpreter.yaml", customizationName, functionName)
+}
+
+func loadNamedRICFunction(t *testing.T, filename, customizationName, functionName string) *lua.LState {
+	t.Helper()
+	ric := loadYAML(t, filepath.Join("..", "..", "config", "karmada", "ric", filename))
 	customization := requireMap(t, requireMap(t, requireMap(t, ric, "spec"), "customizations"), customizationName)
 	script, ok := customization["luaScript"].(string)
 	if !ok || script == "" {

@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -191,7 +192,12 @@ func (r *PVMigrationReconciler) validateBinding(ctx context.Context, m *api.PVMi
 	for _, item := range clusters {
 		c, ok := item.(map[string]interface{})
 		if ok && c["name"] == m.Spec.TargetCluster {
-			return fmt.Errorf("target is already selected by ResourceBinding; pre-stage PVs before changing placement")
+			if len(clusters) != 1 {
+				return fmt.Errorf("target is already selected by ResourceBinding; split placement cannot stage PVs")
+			}
+			if err := r.validateSelectedTargetHold(ctx, m, md, rb); err != nil {
+				return fmt.Errorf("target is already selected by ResourceBinding; pre-stage PVs before changing placement or retain the exact operation hold: %w", err)
+			}
 		}
 	}
 	// Validate target PVC names against the source template: prevent arbitrary claim rebinding.
@@ -217,6 +223,59 @@ func (r *PVMigrationReconciler) validateBinding(ctx context.Context, m *api.PVMi
 	for ordinal, templates := range byOrdinal {
 		if len(templates) != len(sts.Spec.VolumeClaimTemplates) {
 			return fmt.Errorf("target ordinal %s must map every volumeClaimTemplate", ordinal)
+		}
+	}
+	return nil
+}
+
+// System may select the target before PV preparation while dispatch remains held.
+// An unrelated suspension must never authorize rebinding a selected target's claims.
+func (r *PVMigrationReconciler) validateSelectedTargetHold(ctx context.Context, m *api.PVMigration, md *api.PVMetadata, rb *unstructured.Unstructured) error {
+	const requestUIDKey = "training.dcnlab.com/placement-restore-request-uid"
+	a := rb.GetAnnotations()
+	operation := m.Annotations[requestUIDKey]
+	if operation == "" || a[requestUIDKey] != operation || a["migration.dcnlab.com/group-volume-hold"] != operation {
+		return fmt.Errorf("migration and binding must belong to the same restore hold")
+	}
+	if m.UID == "" || a["migration.dcnlab.com/pv-migration"] != m.Name || a["migration.dcnlab.com/pv-migration-uid"] != string(m.UID) {
+		return fmt.Errorf("binding must reference the current PVMigration name and UID")
+	}
+	if rb.GetUID() == "" || !rb.GetDeletionTimestamp().IsZero() || !md.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("binding or source metadata identity is not live")
+	}
+	workloadUID, _, _ := unstructured.NestedString(rb.Object, "spec", "resource", "uid")
+	namespace, _, _ := unstructured.NestedString(rb.Object, "spec", "resource", "namespace")
+	if workloadUID != md.Spec.WorkloadRef.UID || namespace != m.Namespace {
+		return fmt.Errorf("binding workload identity does not match source metadata")
+	}
+	name := a["training.dcnlab.com/placement-restore-request"]
+	if name == "" {
+		return fmt.Errorf("binding restore request name is missing")
+	}
+	request := object(schema.GroupVersionKind{Group: "migration.dcnlab.com", Version: "v1alpha1", Kind: "RestoreRequest"}, m.Namespace, name)
+	if err := r.Get(ctx, client.ObjectKeyFromObject(request), request); err != nil {
+		return fmt.Errorf("read bound restore request: %w", err)
+	}
+	if string(request.GetUID()) != operation || !request.GetDeletionTimestamp().IsZero() {
+		return fmt.Errorf("bound restore request UID is stale or deleting")
+	}
+	checks := []struct {
+		path []string
+		want string
+	}{
+		{[]string{"sourceCluster"}, m.Spec.SourceCluster},
+		{[]string{"targetCluster"}, m.Spec.TargetCluster},
+		{[]string{"workloadRef", "apiVersion"}, "apps/v1"},
+		{[]string{"workloadRef", "kind"}, "StatefulSet"},
+		{[]string{"workloadRef", "name"}, md.Spec.WorkloadRef.Name},
+		{[]string{"workloadRef", "uid"}, workloadUID},
+		{[]string{"groupRestore", "operationUID"}, string(rb.GetUID())},
+		{[]string{"groupRestore", "sourceWorldUID"}, workloadUID},
+	}
+	for _, check := range checks {
+		value, _, err := unstructured.NestedString(request.Object, append([]string{"spec"}, check.path...)...)
+		if err != nil || value != check.want {
+			return fmt.Errorf("bound restore request %s mismatch", strings.Join(check.path, "."))
 		}
 	}
 	return nil

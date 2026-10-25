@@ -1,0 +1,17 @@
+apiVersion: config.karmada.io/v1alpha1
+kind: ResourceInterpreterCustomization
+metadata:
+  name: persistentvolume
+spec:
+  target:
+    apiVersion: v1
+    kind: PersistentVolume
+  customizations:
+    statusReflection:
+      luaScript: |
+        function ReflectStatus(observedObj)
+          if observedObj.status == nil then
+            return {}
+          end
+          return {phase = observedObj.status.phase}
+        end
