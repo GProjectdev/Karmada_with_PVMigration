@@ -217,6 +217,9 @@ func (in *PVMigrationStatus) DeepCopy() *PVMigrationStatus {
 
 func (in *VolumeMetadata) DeepCopyInto(out *VolumeMetadata) {
 	*out = *in
+	if in.PVCSpec != nil {
+		out.PVCSpec = in.PVCSpec.DeepCopy()
+	}
 	in.PVSpec.DeepCopyInto(&out.PVSpec)
 }
 

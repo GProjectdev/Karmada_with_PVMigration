@@ -126,6 +126,8 @@ spec:
                       routingGeneration:
                         type: integer
                         format: int64
+                      standalone:
+                        type: boolean
       additionalPrinterColumns:
         - name: Phase
           type: string

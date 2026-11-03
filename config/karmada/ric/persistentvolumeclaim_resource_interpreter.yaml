@@ -1,0 +1,26 @@
+apiVersion: config.karmada.io/v1alpha1
+kind: ResourceInterpreterCustomization
+metadata:
+  name: persistentvolumeclaim
+spec:
+  target:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+  customizations:
+    statusReflection:
+      luaScript: |
+        function ReflectStatus(observedObj)
+          if observedObj.status == nil then
+            return {}
+          end
+          local metadata = observedObj.metadata or {}
+          local spec = observedObj.spec or {}
+          local labels = metadata.labels or {}
+          return {
+            phase = observedObj.status.phase,
+            uid = metadata.uid,
+            deletionTimestamp = metadata.deletionTimestamp,
+            migrationUID = labels["migration.dcnlab.com/migration-uid"],
+            volumeName = spec.volumeName
+          }
+        end

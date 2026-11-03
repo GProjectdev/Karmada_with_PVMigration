@@ -8,6 +8,7 @@ type VolumeMapping struct {
 }
 
 type WorkReference struct {
+	Standalone        bool   `json:"standalone,omitempty"`
 	RoutingWorkUID    string `json:"routingWorkUID,omitempty"`
 	RoutingGeneration int64  `json:"routingGeneration,omitempty"`
 	Name              string `json:"name,omitempty"`

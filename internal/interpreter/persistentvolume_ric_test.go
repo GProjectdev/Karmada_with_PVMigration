@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPersistentVolumeReflectionReturnsActualPhaseOnly(t *testing.T) {
+func TestPersistentVolumeReflectionReturnsActualPhaseAndBinding(t *testing.T) {
 	L := loadNamedRICFunction(t, "persistentvolume_resource_interpreter.yaml", "statusReflection", "ReflectStatus")
 	defer L.Close()
 	for _, phase := range []string{"Available", "Bound", "Pending", "Released", "Failed"} {
@@ -15,7 +15,7 @@ func TestPersistentVolumeReflectionReturnsActualPhaseOnly(t *testing.T) {
 				"spec":     map[string]any{"claimRef": map[string]any{"uid": "member-pvc"}},
 				"status":   map[string]any{"phase": phase, "message": "not reflected"},
 			}).(map[string]any)
-			if len(got) != 1 || got["phase"] != phase {
+			if len(got) != 2 || got["phase"] != phase || requireMap(t, got, "claimRef")["uid"] != "member-pvc" {
 				t.Fatalf("unexpected PV status reflection: %#v", got)
 			}
 		})

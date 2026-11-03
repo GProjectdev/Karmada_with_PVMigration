@@ -11,12 +11,14 @@ type WorkloadRef struct {
 }
 
 type VolumeMetadata struct {
-	PVCName      string                      `json:"pvcName,omitempty"`
-	PVCUID       string                      `json:"pvcUID,omitempty"`
-	TemplateName string                      `json:"templateName,omitempty"`
-	Ordinal      int32                       `json:"ordinal,omitempty"`
-	PVName       string                      `json:"pvName,omitempty"`
-	PVSpec       corev1.PersistentVolumeSpec `json:"pvSpec,omitempty"`
+	Standalone   bool                              `json:"standalone,omitempty"`
+	PVCSpec      *corev1.PersistentVolumeClaimSpec `json:"pvcSpec,omitempty"`
+	PVCName      string                            `json:"pvcName,omitempty"`
+	PVCUID       string                            `json:"pvcUID,omitempty"`
+	TemplateName string                            `json:"templateName,omitempty"`
+	Ordinal      int32                             `json:"ordinal,omitempty"`
+	PVName       string                            `json:"pvName,omitempty"`
+	PVSpec       corev1.PersistentVolumeSpec       `json:"pvSpec,omitempty"`
 }
 
 type ClusterSnapshot struct {

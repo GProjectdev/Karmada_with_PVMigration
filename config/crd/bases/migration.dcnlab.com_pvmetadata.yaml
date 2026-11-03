@@ -86,6 +86,11 @@ spec:
                         type: string
                       templateName:
                         type: string
+                      standalone:
+                        type: boolean
+                      pvcSpec:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
                       ordinal:
                         type: integer
                         format: int32
@@ -134,6 +139,11 @@ spec:
                               type: string
                             templateName:
                               type: string
+                            standalone:
+                              type: boolean
+                            pvcSpec:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
                             ordinal:
                               type: integer
                               format: int32

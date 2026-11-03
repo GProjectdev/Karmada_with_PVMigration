@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - pvmetadata_resource_interpreter.yaml
   - persistentvolume_resource_interpreter.yaml
+  - persistentvolumeclaim_resource_interpreter.yaml

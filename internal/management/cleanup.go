@@ -62,7 +62,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if !workApplied(w) {
 			return result, fmt.Errorf("Work %s no longer has valid PV application evidence", ref.Name)
 		}
-		if ref.RoutingWorkUID != "" {
+		if ref.RoutingWorkUID != "" || ref.Standalone {
 			md := &api.PVMetadata{}
 			if err := r.Get(ctx, client.ObjectKey{Namespace: m.Namespace, Name: m.Spec.MetadataRef}, md); err != nil {
 				return result, err
@@ -78,6 +78,9 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			matched := false
 			for _, expected := range works {
 				if expected.GetName() == w.GetName() && expected.GetNamespace() == w.GetNamespace() {
+					if ref.Standalone != pairedWork(expected) {
+						return result, fmt.Errorf("cleanup Work kind differs from recorded plan")
+					}
 					if err := validateWork(w, expected, m); err != nil {
 						return result, err
 					}

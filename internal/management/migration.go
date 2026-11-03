@@ -8,6 +8,7 @@ import (
 	"time"
 
 	api "github.com/GProjectdev/Karmada_with_PVMigration/api/v1alpha1"
+	"github.com/GProjectdev/Karmada_with_PVMigration/internal/volumeclaims"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -71,7 +72,7 @@ func (r *PVMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		base := m.DeepCopy()
 		m.Status.PlanHash = hash
 		for _, w := range works {
-			m.Status.Works = append(m.Status.Works, api.WorkReference{Name: w.GetName(), Namespace: w.GetNamespace()})
+			m.Status.Works = append(m.Status.Works, api.WorkReference{Name: w.GetName(), Namespace: w.GetNamespace(), Standalone: pairedWork(w)})
 		}
 		m.Status.Phase, m.Status.Message, m.Status.ObservedGeneration = "Preparing", "PV Work identities recorded", m.Generation
 		if err := r.Status().Patch(ctx, m, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -89,7 +90,7 @@ func (r *PVMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	all := true
 	for i, expected := range works {
 		ref := &m.Status.Works[i]
-		if ref.Name != expected.GetName() || ref.Namespace != expected.GetNamespace() {
+		if ref.Name != expected.GetName() || ref.Namespace != expected.GetNamespace() || ref.Standalone != pairedWork(expected) {
 			return result, fmt.Errorf("migration Work identity changed")
 		}
 		if ref.Detached {
@@ -211,8 +212,26 @@ func (r *PVMigrationReconciler) validateBinding(ctx context.Context, m *api.PVMi
 		}
 	}
 	// Validate target PVC names against the source template: prevent arbitrary claim rebinding.
+	standalone := map[string]bool{}
+	for _, name := range volumeclaims.Standalone(sts) {
+		standalone[name] = true
+	}
 	byOrdinal := map[string]map[string]bool{}
+	markedStandalone := map[string]bool{}
+	for _, snapshot := range md.Status.Clusters {
+		if snapshot.ClusterName == m.Spec.SourceCluster {
+			for _, volume := range snapshot.Volumes {
+				markedStandalone[volume.PVCName] = volume.Standalone
+			}
+		}
+	}
 	for _, mapping := range m.Spec.Volumes {
+		if markedStandalone[mapping.SourcePVC] {
+			if !standalone[mapping.SourcePVC] || mapping.SourcePVC != mapping.TargetPVC {
+				return fmt.Errorf("standalone PVC must retain an exact StatefulSet claim reference")
+			}
+			continue
+		}
 		valid := false
 		for _, template := range sts.Spec.VolumeClaimTemplates {
 			prefix := template.Name + "-" + sts.Name + "-"
@@ -318,8 +337,10 @@ func BuildWorks(m *api.PVMigration, md *api.PVMetadata) ([]*unstructured.Unstruc
 	var snapshot *api.ClusterSnapshot
 	for i := range md.Status.Clusters {
 		if md.Status.Clusters[i].ClusterName == m.Spec.SourceCluster {
+			if snapshot != nil {
+				return nil, fmt.Errorf("duplicate source snapshot")
+			}
 			snapshot = &md.Status.Clusters[i]
-			break
 		}
 	}
 	if snapshot == nil || snapshot.CollectedAt == nil || snapshot.ObservedGeneration != md.Generation || snapshot.WorkloadUID == "" {
@@ -345,14 +366,20 @@ func BuildWorks(m *api.PVMigration, md *api.PVMetadata) ([]*unstructured.Unstruc
 			return nil, fmt.Errorf("source PVC %s not present in snapshot", mapping.SourcePVC)
 		}
 		prefix := v.TemplateName + "-" + md.Spec.WorkloadRef.Name + "-"
-		if v.TemplateName == "" || !validOrdinalPVC(mapping.TargetPVC, prefix) {
-			return nil, fmt.Errorf("source and target PVC must use the same claim template")
+		if v.Standalone {
+			if v.TemplateName != "" || v.PVCSpec == nil || mapping.SourcePVC != mapping.TargetPVC {
+				return nil, fmt.Errorf("standalone PVC requires source spec and identical source/target names")
+			}
+		} else {
+			if v.TemplateName == "" || !validOrdinalPVC(mapping.TargetPVC, prefix) {
+				return nil, fmt.Errorf("source and target PVC must use the same claim template")
+			}
+			targetOrdinal := strings.TrimPrefix(mapping.TargetPVC, prefix)
+			if prior, exists := sourceOrdinalByTarget[targetOrdinal]; exists && prior != v.Ordinal {
+				return nil, fmt.Errorf("all volumes for a target ordinal must come from one source ordinal")
+			}
+			sourceOrdinalByTarget[targetOrdinal] = v.Ordinal
 		}
-		targetOrdinal := strings.TrimPrefix(mapping.TargetPVC, prefix)
-		if prior, exists := sourceOrdinalByTarget[targetOrdinal]; exists && prior != v.Ordinal {
-			return nil, fmt.Errorf("all volumes for a target ordinal must come from one source ordinal")
-		}
-		sourceOrdinalByTarget[targetOrdinal] = v.Ordinal
 		if len(validation.IsDNS1123Subdomain(mapping.TargetPVC)) > 0 {
 			return nil, fmt.Errorf("invalid target PVC name")
 		}
@@ -378,10 +405,18 @@ func BuildWorks(m *api.PVMigration, md *api.PVMetadata) ([]*unstructured.Unstruc
 			return nil, err
 		}
 		delete(manifest, "status")
+		manifests := []interface{}{manifest}
+		if v.Standalone {
+			claim, err := standaloneClaim(m, v, pvName)
+			if err != nil {
+				return nil, err
+			}
+			manifests = append(manifests, claim)
+		}
 		w := object(WorkGVK, "karmada-es-"+m.Spec.TargetCluster, pvName)
 		w.SetLabels(map[string]string{ManagedLabel: ManagerName, OwnerLabel: string(m.UID)})
 		// No cross-namespace ownerReference: cleanup is explicit and deletion always preserves PVs.
-		w.Object["spec"] = map[string]interface{}{"preserveResourcesOnDeletion": true, "workload": map[string]interface{}{"manifests": []interface{}{manifest}}}
+		w.Object["spec"] = map[string]interface{}{"preserveResourcesOnDeletion": true, "workload": map[string]interface{}{"manifests": manifests}}
 		setWorkRouting(w)
 		works = append(works, w)
 	}
@@ -459,6 +494,9 @@ func workApplied(w *unstructured.Unstructured) bool {
 	}
 	statuses, _, _ := unstructured.NestedSlice(w.Object, "status", "manifestStatuses")
 	manifests, _, _ := unstructured.NestedSlice(w.Object, "spec", "workload", "manifests")
+	if len(manifests) == 2 {
+		return pairedWorkApplied(w, manifests, statuses)
+	}
 	if len(statuses) != 1 || len(manifests) != 1 {
 		return false
 	}

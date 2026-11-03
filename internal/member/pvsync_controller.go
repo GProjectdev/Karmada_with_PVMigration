@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	migrationv1alpha1 "github.com/GProjectdev/Karmada_with_PVMigration/api/v1alpha1"
+	"github.com/GProjectdev/Karmada_with_PVMigration/internal/volumeclaims"
 )
 
 const defaultPollInterval = time.Minute
@@ -97,8 +98,8 @@ func (r *PVSyncReconciler) collect(ctx context.Context, metadata *migrationv1alp
 	if replicas <= 0 {
 		return observed, fmt.Errorf("statefulset %s/%s has zero replicas", sts.Namespace, sts.Name)
 	}
-	if len(sts.Spec.VolumeClaimTemplates) == 0 {
-		return observed, fmt.Errorf("statefulset %s/%s has no volumeClaimTemplates", sts.Namespace, sts.Name)
+	if len(sts.Spec.VolumeClaimTemplates) == 0 && len(volumeclaims.Standalone(&sts)) == 0 {
+		return observed, fmt.Errorf("statefulset %s/%s has no PVC references", sts.Namespace, sts.Name)
 	}
 
 	startOrdinal := int32(0)
@@ -107,6 +108,7 @@ func (r *PVSyncReconciler) collect(ctx context.Context, metadata *migrationv1alp
 	}
 
 	volumes := make([]migrationv1alpha1.VolumeMetadata, 0, len(sts.Spec.VolumeClaimTemplates)*int(replicas))
+	seen := map[string]bool{}
 	for _, template := range sts.Spec.VolumeClaimTemplates {
 		if template.Name == "" {
 			return observed, fmt.Errorf("statefulset %s/%s has a volumeClaimTemplate without a name", sts.Namespace, sts.Name)
@@ -118,7 +120,19 @@ func (r *PVSyncReconciler) collect(ctx context.Context, metadata *migrationv1alp
 				return observed, err
 			}
 			volumes = append(volumes, volume)
+			seen[pvcName] = true
 		}
+	}
+	for _, name := range volumeclaims.Standalone(&sts) {
+		if seen[name] {
+			continue
+		}
+		volume, err := r.collectVolume(ctx, sts.Namespace, "", 0, name)
+		if err != nil {
+			return observed, err
+		}
+		volumes = append(volumes, volume)
+		seen[name] = true
 	}
 
 	now := time.Now()
@@ -138,6 +152,9 @@ func (r *PVSyncReconciler) collectVolume(ctx context.Context, namespace, templat
 	if pvc.UID == "" {
 		return migrationv1alpha1.VolumeMetadata{}, fmt.Errorf("pvc %s/%s has empty uid", namespace, pvcName)
 	}
+	if !pvc.DeletionTimestamp.IsZero() {
+		return migrationv1alpha1.VolumeMetadata{}, fmt.Errorf("pvc %s/%s is deleting", namespace, pvcName)
+	}
 	if pvc.Status.Phase != corev1.ClaimBound {
 		return migrationv1alpha1.VolumeMetadata{}, fmt.Errorf("pvc %s/%s is not bound", namespace, pvcName)
 	}
@@ -155,6 +172,9 @@ func (r *PVSyncReconciler) collectVolume(ctx context.Context, namespace, templat
 	if pv.Status.Phase != corev1.VolumeBound {
 		return migrationv1alpha1.VolumeMetadata{}, fmt.Errorf("pv %s is not bound", pv.Name)
 	}
+	if !pv.DeletionTimestamp.IsZero() {
+		return migrationv1alpha1.VolumeMetadata{}, fmt.Errorf("pv %s is deleting", pv.Name)
+	}
 	if pv.Spec.ClaimRef == nil {
 		return migrationv1alpha1.VolumeMetadata{}, fmt.Errorf("pv %s has no claimRef", pv.Name)
 	}
@@ -162,14 +182,19 @@ func (r *PVSyncReconciler) collectVolume(ctx context.Context, namespace, templat
 		return migrationv1alpha1.VolumeMetadata{}, fmt.Errorf("pv %s claimRef does not match pvc %s/%s", pv.Name, pvc.Namespace, pvc.Name)
 	}
 
-	return migrationv1alpha1.VolumeMetadata{
+	volume := migrationv1alpha1.VolumeMetadata{
 		PVCName:      pvc.Name,
 		PVCUID:       string(pvc.UID),
 		TemplateName: templateName,
 		Ordinal:      ordinal,
 		PVName:       pv.Name,
 		PVSpec:       *pv.Spec.DeepCopy(),
-	}, nil
+	}
+	if templateName == "" {
+		volume.Standalone = true
+		volume.PVCSpec = pvc.Spec.DeepCopy()
+	}
+	return volume, nil
 }
 
 func (r *PVSyncReconciler) pollInterval() time.Duration {

@@ -13,5 +13,15 @@ spec:
           if observedObj.status == nil then
             return {}
           end
-          return {phase = observedObj.status.phase}
+          local metadata = observedObj.metadata or {}
+          local spec = observedObj.spec or {}
+          local labels = metadata.labels or {}
+          return {
+            phase = observedObj.status.phase,
+            uid = metadata.uid,
+            deletionTimestamp = metadata.deletionTimestamp,
+            migrationUID = labels["migration.dcnlab.com/migration-uid"],
+            claimRef = spec.claimRef,
+            nfs = spec.nfs
+          }
         end
