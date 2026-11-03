@@ -72,7 +72,7 @@ func (r *PVMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		base := m.DeepCopy()
 		m.Status.PlanHash = hash
 		for _, w := range works {
-			m.Status.Works = append(m.Status.Works, api.WorkReference{Name: w.GetName(), Namespace: w.GetNamespace(), Standalone: pairedWork(w)})
+			m.Status.Works = append(m.Status.Works, api.WorkReference{Name: w.GetName(), Namespace: w.GetNamespace(), Standalone: standaloneWork(w)})
 		}
 		m.Status.Phase, m.Status.Message, m.Status.ObservedGeneration = "Preparing", "PV Work identities recorded", m.Generation
 		if err := r.Status().Patch(ctx, m, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -88,9 +88,10 @@ func (r *PVMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 	base := m.DeepCopy()
 	all := true
+	observed := map[string]*unstructured.Unstructured{}
 	for i, expected := range works {
 		ref := &m.Status.Works[i]
-		if ref.Name != expected.GetName() || ref.Namespace != expected.GetNamespace() || ref.Standalone != pairedWork(expected) {
+		if ref.Name != expected.GetName() || ref.Namespace != expected.GetNamespace() || ref.Standalone != standaloneWork(expected) {
 			return result, fmt.Errorf("migration Work identity changed")
 		}
 		if ref.Detached {
@@ -124,8 +125,23 @@ func (r *PVMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if err := validateWork(actual, expected, m); err != nil {
 			return result, err
 		}
+		observed[actual.GetName()] = actual
 		ref.Applied = workApplied(actual)
 		if !ref.Applied {
+			all = false
+		}
+	}
+	// Persist the reciprocal binding receipt only after both independent Works agree.
+	for i := range m.Status.Works {
+		ref := &m.Status.Works[i]
+		if !ref.Standalone || ref.Detached {
+			continue
+		}
+		pvName := works[i].GetLabels()[standalonePairLabel]
+		pvUID, pvcUID, ready := splitPairApplied(observed[pvName], observed[pvName+"-pvc"])
+		ref.Applied = ready
+		ref.PVUID, ref.PVCUID = pvUID, pvcUID
+		if !ready {
 			all = false
 		}
 	}
@@ -413,18 +429,28 @@ func BuildWorks(m *api.PVMigration, md *api.PVMetadata) ([]*unstructured.Unstruc
 			}
 			manifests = append(manifests, claim)
 		}
-		w := object(WorkGVK, "karmada-es-"+m.Spec.TargetCluster, pvName)
-		w.SetLabels(map[string]string{ManagedLabel: ManagerName, OwnerLabel: string(m.UID)})
-		// No cross-namespace ownerReference: cleanup is explicit and deletion always preserves PVs.
-		w.Object["spec"] = map[string]interface{}{"preserveResourcesOnDeletion": true, "workload": map[string]interface{}{"manifests": manifests}}
-		setWorkRouting(w)
-		works = append(works, w)
+		for index, resource := range manifests {
+			name := pvName
+			if index == 1 {
+				name += "-pvc"
+			}
+			w := object(WorkGVK, "karmada-es-"+m.Spec.TargetCluster, name)
+			labels := map[string]string{ManagedLabel: ManagerName, OwnerLabel: string(m.UID)}
+			if v.Standalone {
+				labels[standalonePairLabel] = pvName
+			}
+			w.SetLabels(labels)
+			// Upstream Karmada reflects one manifest per Work. Keep PV and PVC separate.
+			w.Object["spec"] = map[string]interface{}{"preserveResourcesOnDeletion": true, "workload": map[string]interface{}{"manifests": []interface{}{resource}}}
+			setWorkRouting(w)
+			works = append(works, w)
+		}
 	}
 	return works, nil
 }
 
 func validateWork(actual, expected *unstructured.Unstructured, m *api.PVMigration) error {
-	if actual.GetLabels()[OwnerLabel] != string(m.UID) || actual.GetLabels()[ManagedLabel] != ManagerName || !reflect.DeepEqual(comparableWorkSpec(actual), comparableWorkSpec(expected)) {
+	if actual.GetLabels()[standalonePairLabel] != expected.GetLabels()[standalonePairLabel] || actual.GetLabels()[OwnerLabel] != string(m.UID) || actual.GetLabels()[ManagedLabel] != ManagerName || !reflect.DeepEqual(comparableWorkSpec(actual), comparableWorkSpec(expected)) {
 		return fmt.Errorf("Work %s ownership or immutable spec conflict", actual.GetName())
 	}
 	if !workGenerationAllowed(actual, m) {
@@ -494,6 +520,10 @@ func workApplied(w *unstructured.Unstructured) bool {
 	}
 	statuses, _, _ := unstructured.NestedSlice(w.Object, "status", "manifestStatuses")
 	manifests, _, _ := unstructured.NestedSlice(w.Object, "spec", "workload", "manifests")
+	if standaloneWork(w) {
+		_, valid := standaloneStatus(w)
+		return valid
+	}
 	if len(manifests) == 2 {
 		return pairedWorkApplied(w, manifests, statuses)
 	}

@@ -36,6 +36,13 @@ func boundPair(t *testing.T, m *api.PVMigration, md *api.PVMetadata) *unstructur
 		t.Fatal(err)
 	}
 	w := works[0]
+	claims, _, _ := unstructured.NestedSlice(works[1].Object, "spec", "workload", "manifests")
+	pvs, _, _ := unstructured.NestedSlice(w.Object, "spec", "workload", "manifests")
+	_ = unstructured.SetNestedSlice(w.Object, append(pvs, claims...), "spec", "workload", "manifests")
+	labels := w.GetLabels()
+	delete(labels, standalonePairLabel)
+	w.SetLabels(labels)
+	setWorkRouting(w)
 	w.SetGeneration(1)
 	w.SetUID("work-uid")
 	manifests, _, _ := unstructured.NestedSlice(w.Object, "spec", "workload", "manifests")
@@ -218,17 +225,19 @@ func TestStandaloneReconcileAndCleanup(t *testing.T) {
 	if err := c.Get(ctx, req.NamespacedName, m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Status.Phase != "Preparing" || len(m.Status.Works) != 1 || !m.Status.Works[0].Standalone || m.Status.Works[0].Applied {
+	if m.Status.Phase != "Preparing" || len(m.Status.Works) != 2 || !m.Status.Works[0].Standalone || m.Status.Works[0].Applied {
 		t.Fatalf("bad durable plan: %#v", m.Status)
 	}
-	w := object(WorkGVK, m.Status.Works[0].Namespace, m.Status.Works[0].Name)
-	if err := c.Get(ctx, client.ObjectKeyFromObject(w), w); err != nil {
-		t.Fatal(err)
-	}
-	w.Object["status"] = boundPair(t, m, md).Object["status"]
-	w.SetGeneration(1)
-	if err := c.Update(ctx, w); err != nil {
-		t.Fatal(err)
+	for _, expected := range boundSplitWorks(t, m, md) {
+		w := object(WorkGVK, expected.GetNamespace(), expected.GetName())
+		if err := c.Get(ctx, client.ObjectKeyFromObject(w), w); err != nil {
+			t.Fatal(err)
+		}
+		w.Object["status"] = expected.Object["status"]
+		w.SetGeneration(1)
+		if err := c.Update(ctx, w); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		t.Fatal(err)
@@ -254,8 +263,11 @@ func TestStandaloneReconcileAndCleanup(t *testing.T) {
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Get(ctx, client.ObjectKeyFromObject(w), w); !apierrors.IsNotFound(err) {
-		t.Fatalf("Work recreated: %v", err)
+	for _, ref := range m.Status.Works {
+		w := object(WorkGVK, ref.Namespace, ref.Name)
+		if err := c.Get(ctx, client.ObjectKeyFromObject(w), w); !apierrors.IsNotFound(err) {
+			t.Fatalf("Work recreated: %v", err)
+		}
 	}
 }
 

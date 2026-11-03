@@ -11,9 +11,99 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-func pairedWork(w *unstructured.Unstructured) bool {
+const standalonePairLabel = "migration.dcnlab.com/standalone-pair"
+
+func standaloneWork(w *unstructured.Unstructured) bool {
+	return w.GetLabels()[standalonePairLabel] != ""
+}
+
+// Check the single reflected resource before combining independent Work receipts.
+func standaloneStatus(w *unstructured.Unstructured) (map[string]interface{}, bool) {
 	manifests, _, _ := unstructured.NestedSlice(w.Object, "spec", "workload", "manifests")
-	return len(manifests) == 2
+	statuses, _, _ := unstructured.NestedSlice(w.Object, "status", "manifestStatuses")
+	if len(manifests) != 1 || len(statuses) != 1 {
+		return nil, false
+	}
+	manifest, ok := manifests[0].(map[string]interface{})
+	reflection, valid := statuses[0].(map[string]interface{})
+	if !ok || !valid {
+		return nil, false
+	}
+	obj := &unstructured.Unstructured{Object: manifest}
+	pair := w.GetLabels()[standalonePairLabel]
+	if pair == "" || obj.GetAPIVersion() != "v1" || obj.GetName() == "" {
+		return nil, false
+	}
+	for key, want := range map[string]string{"group": "", "version": "v1", "kind": obj.GetKind(), "name": obj.GetName(), "namespace": obj.GetNamespace()} {
+		got, _, err := unstructured.NestedString(reflection, "identifier", key)
+		if err != nil || got != want {
+			return nil, false
+		}
+	}
+	status, _, _ := unstructured.NestedMap(reflection, "status")
+	uid, _, err := unstructured.NestedString(status, "uid")
+	if err != nil || uid == "" || status["phase"] != "Bound" || status["deletionTimestamp"] != nil || w.GetLabels()[OwnerLabel] == "" || status["migrationUID"] != w.GetLabels()[OwnerLabel] {
+		return nil, false
+	}
+	switch obj.GetKind() {
+	case "PersistentVolume":
+		if w.GetName() != pair || obj.GetName() != pair || obj.GetNamespace() != "" {
+			return nil, false
+		}
+		for _, key := range []string{"name", "namespace"} {
+			want, _, _ := unstructured.NestedString(obj.Object, "spec", "claimRef", key)
+			got, _, _ := unstructured.NestedString(status, "claimRef", key)
+			if want == "" || want != got {
+				return nil, false
+			}
+		}
+		claimUID, _, _ := unstructured.NestedString(status, "claimRef", "uid")
+		var expected, actual corev1.NFSVolumeSource
+		nfs, _, _ := unstructured.NestedMap(obj.Object, "spec", "nfs")
+		backing, _, _ := unstructured.NestedMap(status, "nfs")
+		if claimUID == "" || runtime.DefaultUnstructuredConverter.FromUnstructured(nfs, &expected) != nil || runtime.DefaultUnstructuredConverter.FromUnstructured(backing, &actual) != nil || expected.Server == "" || expected.Path == "" || !reflect.DeepEqual(expected, actual) {
+			return nil, false
+		}
+	case "PersistentVolumeClaim":
+		volume, _, _ := unstructured.NestedString(obj.Object, "spec", "volumeName")
+		if w.GetName() != pair+"-pvc" || obj.GetNamespace() == "" || volume != pair || status["volumeName"] != pair {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+	return status, true
+}
+
+func splitPairApplied(pv, pvc *unstructured.Unstructured) (string, string, bool) {
+	if pv == nil || pvc == nil || pv.GetNamespace() != pvc.GetNamespace() || pv.GetLabels()[OwnerLabel] != pvc.GetLabels()[OwnerLabel] || pv.GetLabels()[standalonePairLabel] != pvc.GetLabels()[standalonePairLabel] || !standaloneWork(pv) || !standaloneWork(pvc) || !workApplied(pv) || !workApplied(pvc) {
+		return "", "", false
+	}
+	manifests, statuses := []interface{}{}, []interface{}{}
+	for _, w := range []*unstructured.Unstructured{pv, pvc} {
+		objects, _, _ := unstructured.NestedSlice(w.Object, "spec", "workload", "manifests")
+		reflections, _, _ := unstructured.NestedSlice(w.Object, "status", "manifestStatuses")
+		manifests = append(manifests, objects...)
+		statuses = append(statuses, reflections...)
+	}
+	if !pairedWorkApplied(pv, manifests, statuses) {
+		return "", "", false
+	}
+	pvs, _ := standaloneStatus(pv)
+	pvcs, _ := standaloneStatus(pvc)
+	return pvs["uid"].(string), pvcs["uid"].(string), true
+}
+
+func standaloneReceiptMatches(w *unstructured.Unstructured, ref api.WorkReference) bool {
+	status, valid := standaloneStatus(w)
+	if !valid || ref.PVUID == "" || ref.PVCUID == "" {
+		return false
+	}
+	if w.GetName() == w.GetLabels()[standalonePairLabel] {
+		claimUID, _, _ := unstructured.NestedString(status, "claimRef", "uid")
+		return status["uid"] == ref.PVUID && claimUID == ref.PVCUID
+	}
+	return status["uid"] == ref.PVCUID
 }
 
 func standaloneClaim(m *api.PVMigration, v api.VolumeMetadata, pvName string) (map[string]interface{}, error) {

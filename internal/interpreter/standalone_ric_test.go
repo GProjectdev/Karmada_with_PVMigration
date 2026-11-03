@@ -59,6 +59,8 @@ func TestStandaloneMetadataSurvivesAggregationAndSchema(t *testing.T) {
 		if file == "migration.dcnlab.com_pvmigrations.yaml" {
 			props := requireMap(t, requireMap(t, requireMap(t, status, "works"), "items"), "properties")
 			assertEqual(t, requireMap(t, props, "standalone")["type"], "boolean", "durable marker schema")
+			assertEqual(t, requireMap(t, props, "pvUID")["type"], "string", "durable PV UID schema")
+			assertEqual(t, requireMap(t, props, "pvcUID")["type"], "string", "durable PVC UID schema")
 			continue
 		}
 		clusters := requireMap(t, requireMap(t, requireMap(t, status, "clusters"), "items"), "properties")
