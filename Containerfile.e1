@@ -1,0 +1,7 @@
+FROM docker.io/library/golang:1.26.7 AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -trimpath -o /controller-manager ./cmd/controller-manager
+
+FROM docker.io/karmada/karmada-controller-manager:v1.19.0
+COPY --from=build /controller-manager /bin/karmada-controller-manager
